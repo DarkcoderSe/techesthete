@@ -2,30 +2,35 @@
 
 namespace DTApi\Repository;
 
-use DTApi\Events\SessionEnded;
-use DTApi\Helpers\SendSMSHelper;
-use Event;
-use Carbon\Carbon;
-use Monolog\Logger;
-use DTApi\Models\Job;
-use DTApi\Models\User;
-use DTApi\Models\Language;
-use DTApi\Models\UserMeta;
-use DTApi\Helpers\TeHelper;
+/**
+ * Rearranged helpers, models and facades.
+ */
 use Illuminate\Http\Request;
-use DTApi\Models\Translator;
-use DTApi\Mailers\AppMailer;
-use DTApi\Models\UserLanguages;
+
+use DTApi\Events\SessionEnded;
 use DTApi\Events\JobWasCreated;
 use DTApi\Events\JobWasCanceled;
-use DTApi\Models\UsersBlacklist;
+
+use DTApi\Helpers\SendSMSHelper;
+use DTApi\Helpers\TeHelper;
 use DTApi\Helpers\DateTimeHelper;
-use DTApi\Mailers\MailerInterface;
+
 use Illuminate\Support\Facades\DB;
 use Monolog\Handler\StreamHandler;
 use Illuminate\Support\Facades\Log;
 use Monolog\Handler\FirePHPHandler;
 use Illuminate\Support\Facades\Auth;
+use Monolog\Logger;
+use Carbon\Carbon;
+use Event;
+
+/**
+ * If we have too many models then, We can also use PHP 7.1 ^ destructuring method to use models. 
+ */
+use DTApi\Models\{Job, User, Language, UserMeta, Translator, UserLanguages, UsersBlacklist};
+
+use DTApi\Mailers\AppMailer;
+use DTApi\Mailers\MailerInterface;
 
 /**
  * Class BookingRepository
@@ -44,6 +49,7 @@ class BookingRepository extends BaseRepository
     function __construct(Job $model, MailerInterface $mailer)
     {
         parent::__construct($model);
+
         $this->mailer = $mailer;
         $this->logger = new Logger('admin_logger');
 
@@ -52,37 +58,78 @@ class BookingRepository extends BaseRepository
     }
 
     /**
-     * @param $user_id
+     * @param $userId
      * @return array
      */
-    public function getUsersJobs($user_id)
+    public function getUsersJobs($userId)
     {
-        $cuser = User::find($user_id);
-        $usertype = '';
-        $emergencyJobs = array();
-        $noramlJobs = array();
-        if ($cuser && $cuser->is('customer')) {
-            $jobs = $cuser->jobs()->with('user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback')->whereIn('status', ['pending', 'assigned', 'started'])->orderBy('due', 'asc')->get();
-            $usertype = 'customer';
-        } elseif ($cuser && $cuser->is('translator')) {
-            $jobs = Job::getTranslatorJobs($cuser->id, 'new');
-            $jobs = $jobs->pluck('jobs')->all();
-            $usertype = 'translator';
-        }
-        if ($jobs) {
-            foreach ($jobs as $jobitem) {
-                if ($jobitem->immediate == 'yes') {
-                    $emergencyJobs[] = $jobitem;
-                } else {
-                    $noramlJobs[] = $jobitem;
-                }
+        /**
+         * 1. Added Exception handling here.
+         * 2. used findOrFail instead of find method.
+         * 3. Changed naming convention of variable. variable name should be sensible and self-explaining.
+         * 4. Always use camelCase for methods, variable etc.
+         * 5. Used array of relationships for Eagerloading. 
+         */
+
+        try {
+            $customerUser = User::findOrFail($userId);
+
+            // you can also initialize array with []
+            $userType = '';
+            $emergencyJobs = array(); 
+            $noramlJobs = array();
+
+            // there is no need to check whether object is null or not 
+            // since we are findOrFail method with exception handling.
+            if ($customerUser->is('customer')) {
+
+                // also, there is no need to write code in one line when you can do it in multple lines.
+                // it affects the code readability. 
+
+                $jobs = $customerUser->jobs()
+                                    ->with(['user.userMeta', 'user.average', 'translatorJobRel.user.average', 'language', 'feedback'])
+                                    ->whereIn('status', ['pending', 'assigned', 'started'])
+                                    ->orderBy('due', 'asc')
+                                    ->get();
+
+                $userType = 'customer';
+
+            } elseif ($customerUser->is('translator')) {
+
+                $jobs = Job::getTranslatorJobs($customerUser->id, 'new');
+                $jobs = $jobs->pluck('jobs')->all();
+                $userType = 'translator';
             }
-            $noramlJobs = collect($noramlJobs)->each(function ($item, $key) use ($user_id) {
-                $item['usercheck'] = Job::checkParticularJob($user_id, $item);
-            })->sortBy('due')->all();
+
+
+            // checking whether jobs object does have more rows than zero. 
+            if ($jobs->count() > 0) {
+                foreach ($jobs as $jobItem) {
+
+                    // No need to use paranthesis for one line if-else statement. 
+                    if ($jobItem->immediate == 'yes') 
+                        $emergencyJobs[] = $jobItem;
+                    else 
+                        $noramlJobs[] = $jobItem;   
+                }
+
+                $noramlJobs = collect($noramlJobs)
+                                ->each(function ($item, $key) use ($userId) {
+                                    $item['usercheck'] = Job::checkParticularJob($userId, $item);
+                                })
+                                ->sortBy('due')
+                                ->all();
+            }
+        } catch (\Throwable $th) {
+            abort(404);
         }
 
-        return ['emergencyJobs' => $emergencyJobs, 'noramlJobs' => $noramlJobs, 'cuser' => $cuser, 'usertype' => $usertype];
+        return [
+            'emergencyJobs' => $emergencyJobs,
+            'noramlJobs' => $noramlJobs, 
+            'customerUser' => $customerUser, 
+            'userType' => $userType
+        ];
     }
 
     /**

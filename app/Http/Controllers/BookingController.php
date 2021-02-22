@@ -2,11 +2,15 @@
 
 namespace DTApi\Http\Controllers;
 
-use DTApi\Models\Job;
-use DTApi\Http\Requests;
-use DTApi\Models\Distance;
-use Illuminate\Http\Request;
 use DTApi\Repository\BookingRepository;
+
+use DTApi\Http\Requests;
+use Illuminate\Http\Request;
+
+use DTApi\Models\Job;
+use DTApi\Models\Distance;
+
+use DB;
 
 /**
  * Class BookingController
@@ -35,15 +39,12 @@ class BookingController extends Controller
      */
     public function index(Request $request)
     {
-        if($user_id = $request->get('user_id')) {
-
-            $response = $this->repository->getUsersJobs($user_id);
-
-        }
+        // No need to use paranthesis for one line if-else statement. 
+        if($userId = $request->get('userId')) 
+            $response = $this->repository->getUsersJobs($userId);
+        
         elseif($request->__authenticatedUser->user_type == env('ADMIN_ROLE_ID') || $request->__authenticatedUser->user_type == env('SUPERADMIN_ROLE_ID'))
-        {
             $response = $this->repository->getAll($request);
-        }
 
         return response($response);
     }
@@ -53,9 +54,18 @@ class BookingController extends Controller
      * @return mixed
      */
     public function show($id)
-    {
-        $job = $this->repository->with('translatorJobRel.user')->find($id);
+    {   
+        // used exception handling
+        // used findOrFail instead find
 
+        try {
+            $job = $this->repository
+                ->with('translatorJobRel.user')
+                ->findOrFail($id);
+        } catch (\Throwable $th) {
+            abort(404);
+        }
+ 
         return response($job);
     }
 
@@ -65,10 +75,20 @@ class BookingController extends Controller
      */
     public function store(Request $request)
     {
-        $data = $request->all();
+        // used exception handling 
+        // used Database Transaction for fail-safe to store data.
 
-        $response = $this->repository->store($request->__authenticatedUser, $data);
+        DB::beginTransaction();
+        try {
+            $data = $request->all();
+            $response = $this->repository->store($request->__authenticatedUser, $data);
 
+        } catch (\Throwable $th) {
+            DB::rollback();
+            abort(404);
+        }
+
+        DB::commit();
         return response($response);
 
     }
@@ -80,11 +100,23 @@ class BookingController extends Controller
      */
     public function update($id, Request $request)
     {
-        $data = $request->all();
-        $cuser = $request->__authenticatedUser;
-        $response = $this->repository->updateJob($id, array_except($data, ['_token', 'submit']), $cuser);
+        // used exception handling 
+        // used Database Transaction for fail-safe to store data.
 
+        DB::beginTransaction();
+        try {
+            $data = $request->all();
+            $customerUser = $request->__authenticatedUser;
+            $response = $this->repository->updateJob($id, array_except($data, ['_token', 'submit']), $customerUser);
+
+        } catch (\Throwable $th) {
+            DB::rollback();
+            abort(404);
+        }
+
+        DB::commit();
         return response($response);
+        
     }
 
     /**
@@ -93,10 +125,14 @@ class BookingController extends Controller
      */
     public function immediateJobEmail(Request $request)
     {
-        $adminSenderEmail = config('app.adminemail');
-        $data = $request->all();
+    
+        try {
+            $adminSenderEmail = config('app.adminemail');
+            $response = $this->repository->storeJobEmail($request->all());
 
-        $response = $this->repository->storeJobEmail($data);
+        } catch (\Throwable $th) {
+            abort(404);
+        }
 
         return response($response);
     }
@@ -113,7 +149,7 @@ class BookingController extends Controller
             return response($response);
         }
 
-        return null;
+        abort(400);
     }
 
     /**
